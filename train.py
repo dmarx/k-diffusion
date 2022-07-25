@@ -40,21 +40,19 @@ def main():
                    help='the configuration file of the model to grow from')
     p.add_argument('--lr', type=float,
                    help='the learning rate')
-    p.add_argument('--n-to-sample', type=int, default=64,
-                   help='the number of images to sample for demo grids')
     p.add_argument('--name', type=str, default='model',
                    help='the name of the run')
     p.add_argument('--num-workers', type=int, default=8,
                    help='the number of data loader workers')
     p.add_argument('--resume', type=str, 
                    help='the checkpoint to resume from')
+    p.add_argument('--sample-n', type=int, default=64,
+                   help='the number of images to sample for demo grids')
     p.add_argument('--save-every', type=int, default=10000,
                    help='save every this many steps')
     p.add_argument('--start-method', type=str, default='spawn',
                    choices=['fork', 'forkserver', 'spawn'],
                    help='the multiprocessing start method')
-    p.add_argument('--train-set', type=str, required=True,
-                   help='the training set location')
     p.add_argument('--wandb-entity', type=str,
                    help='the wandb entity name')
     p.add_argument('--wandb-group', type=str,
@@ -69,6 +67,7 @@ def main():
 
     config = K.config.load_config(open(args.config))
     model_config = config['model']
+    dataset_config = config['dataset']
     opt_config = config['optimizer']
     sched_config = config['lr_sched']
     ema_sched_config = config['ema_sched']
@@ -124,7 +123,16 @@ def main():
         transforms.CenterCrop(size[0]),
         K.augmentation.KarrasAugmentationPipeline(model_config['augment_prob']),
     ])
-    train_set = datasets.ImageFolder(args.train_set, transform=tf)
+
+    if dataset_config['type'] == 'imagefolder':
+        train_set = datasets.ImageFolder(dataset_config['location'], transform=tf)
+    elif dataset_config['type'] == 'cifar10':
+        train_set = datasets.CIFAR10(dataset_config['location'], train=True, download=True, transform=tf)
+    elif dataset_config['type'] == 'mnist':
+        train_set = datasets.MNIST(dataset_config['location'], train=True, download=True, transform=tf)
+    else:
+        raise ValueError('Invalid dataset type')
+
     train_dl = data.DataLoader(train_set, args.batch_size, shuffle=True, drop_last=True,
                                num_workers=args.num_workers, persistent_workers=True)
 
@@ -203,13 +211,13 @@ def main():
         if accelerator.is_main_process:
             tqdm.write('Sampling...')
         filename = f'{args.name}_demo_{step:08}.png'
-        n_per_proc = math.ceil(args.n_to_sample / accelerator.num_processes)
+        n_per_proc = math.ceil(args.sample_n / accelerator.num_processes)
         x = torch.randn([n_per_proc, model_config['input_channels'], size[0], size[1]], device=device) * sigma_max
         sigmas = K.sampling.get_sigmas_karras(50, sigma_min, sigma_max, rho=7., device=device)
         x_0 = K.sampling.sample_lms(model_ema, x, sigmas, disable=not accelerator.is_main_process)
-        x_0 = accelerator.gather(x_0)[:args.n_to_sample]
+        x_0 = accelerator.gather(x_0)[:args.sample_n]
         if accelerator.is_main_process:
-            grid = utils.make_grid(x_0, nrow=math.ceil(args.n_to_sample ** 0.5), padding=0)
+            grid = utils.make_grid(x_0, nrow=math.ceil(args.sample_n ** 0.5), padding=0)
             K.utils.to_pil_image(grid).save(filename)
             if use_wandb:
                 wandb.log({'demo_grid': wandb.Image(filename)}, step=step)
