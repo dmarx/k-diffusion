@@ -59,7 +59,7 @@ def sample_heun(model, x, sigmas, extra_args=None, callback=None, disable=None, 
             x = x + d * dt
         else:
             x_2 = x + d * dt
-            denoised_2 = model(x_2, sigmas[i + 1] * s_in, **extra_args)
+            denoised_2 = model(x_2, sigmas[i + 1] * s_in, is_cond=False, **extra_args)
             d_2 = to_d(x_2, sigmas[i + 1], denoised_2)
             d_prime = (d + d_2) / 2
             x = x + d_prime * dt
@@ -120,3 +120,28 @@ def log_likelihood(model, x, sigma_min, sigma_max, extra_args=None, atol=1e-4, r
     latent, delta_ll = sol[0][-1], sol[1][-1]
     ll_prior = torch.distributions.Normal(0, sigma_max).log_prob(latent).flatten(1).sum(1)
     return ll_prior + delta_ll, {'fevals': fevals}
+
+@torch.no_grad()
+def sample_ddpm(model, x, sigmas, s_churn, extra_args=None, callback=None, disable=None, second_order=True, eta=1.):
+    extra_args = {} if extra_args is None else extra_args
+    s_in = x.new_ones([x.shape[0]])
+    for i in trange(len(sigmas) - 1, disable=disable):
+        denoised = model(x, sigmas[i] * s_in, **extra_args)
+        alpha = 1 / (sigmas[i] ** 2 + 1)
+        alpha_next = 1 / (sigmas[i + 1] ** 2 + 1)
+        ddim_sigma = eta * ((1 - alpha_next) / (1 - alpha)) ** 0.5 * (1 - alpha / alpha_next) ** 0.5
+        sigma_to_add = ddim_sigma * (sigmas[i + 1] ** 2 + 1) ** 0.5
+        sigma_hat = (sigmas[i + 1] ** 2 - sigma_to_add ** 2) ** 0.5
+        if callback is not None:
+            callback({'x': x, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigma_hat, 'denoised': denoised})
+        d = to_d(x, sigmas[i], denoised)
+        dt = sigma_hat - sigmas[i]
+        if sigmas[i + 1] == 0 or not second_order:
+            x = x + d * dt
+        else:
+            x_2 = x + d * dt
+            denoised_2 = model(x_2, sigma_hat * s_in, is_cond=False, **extra_args)
+            dx_2 = to_d(x_2, sigma_hat, denoised_2)
+            x = x + (d + dx_2) * dt / 2
+        x = x + torch.randn_like(x) * sigma_to_add
+    return x
