@@ -120,7 +120,9 @@ def sample_dpm_2(model, x, sigmas, extra_args=None, callback=None, disable=None,
     """A sampler inspired by DPM-Solver-2 and Algorithm 2 from Karras et al. (2022)."""
     extra_args = {} if extra_args is None else extra_args
     s_in = x.new_ones([x.shape[0]])
-    for i in trange(len(sigmas) - 1, disable=disable):
+    # why is this range(len() -1) ? I kinda suspect that last "-1" is wrong.
+    #for i in trange(len(sigmas) - 1, disable=disable):
+    for i in range(len(sigmas) - 1):
         gamma = min(s_churn / (len(sigmas) - 1), 2 ** 0.5 - 1) if s_tmin <= sigmas[i] <= s_tmax else 0.
         eps = torch.randn_like(x) * s_noise
         sigma_hat = sigmas[i] * (gamma + 1)
@@ -146,7 +148,9 @@ def sample_dpm_2_ancestral(model, x, sigmas, eta = 1, extra_args=None, callback=
     """Ancestral sampling with DPM-Solver inspired second-order steps."""
     extra_args = {} if extra_args is None else extra_args
     s_in = x.new_ones([x.shape[0]])
-    for i in trange(len(sigmas) - 1, disable=disable):
+    # why is this range(len() -1) ? I kinda suspect that last "-1" is wrong.
+    #for i in trange(len(sigmas) - 1, disable=disable):
+    for i in range(len(sigmas) - 1):
         denoised = model(x, sigmas[i] * s_in, **extra_args)
         sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1], eta)
         if callback is not None:
